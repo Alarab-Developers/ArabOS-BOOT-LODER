@@ -2,7 +2,7 @@
   <img src="لقطة_الشاشة.png" alt="شعار اللغة البرمجية العربية" width="500" style="border-radius: 15px;">
 </div>
 
-# ArabOS-BOOT-LOADER 🚀
+# ArabOS-BOOT-LOADER 🚀 محمل اقلاع نظام العرب
 
 ## عن المشروع 📝
 المشروع عبارة عن محمل إقلاع مبكر (Early Bootloader) لنظم التشغيل والأنوية.
