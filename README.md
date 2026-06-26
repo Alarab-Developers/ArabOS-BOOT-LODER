@@ -1,3 +1,6 @@
+<div align="center">
+  <img src="لقطة_الشاشة.png" alt="شعار اللغة البرمجية العربية" width="200">
+
 # ArabOS-BOOT-LOADER 🚀
 
 ## عن المشروع 📝
