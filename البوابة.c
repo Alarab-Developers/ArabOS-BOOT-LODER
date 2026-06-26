@@ -1,8 +1,8 @@
-#include "المحركات/محرك_الاقلاع.h"
-#include "المحركات/محرك_القائمة.h"
-#include "المحركات/محرك_ادارة_الصور.h"
-#include "المحركات/محرك_التمهيد.h"
-#include "المحركات/محمل_النواه.h"
+#include "المحركات/محرك_الاقلاع/محرك_الاقلاع.h"
+#include "المحركات/محرك_الرسم/محرك_القائمة.h"
+#include "المحركات/محرك_الرسم/محرك_ادارة_الصور.h"
+#include "المحركات/محرك_التمهيد/محرك_التمهيد.h"
+#include "المحركات/محرك_التطبيقات/محمل_النواه.h"
 
 EFI_STATUS efi_main(
     EFI_HANDLE        ImageHandle,
@@ -44,19 +44,38 @@ EFI_STATUS efi_main(
     CHAR16 AnimationDir[256] = {0};
 
     BootMenu menu;
-    Menu_Init(&menu, (const CHAR8 *)"اختر نظام التشغيل", MENU_DEFAULT_TIMEOUT);
+    Menu_Init(
+        &menu,
+        (const CHAR8 *)"محمل الإقلاع",
+        10  /* مهلة = 10 - سيتم استبدالها من ملف الإعدادات */
+    );
 
-    Menu_ReadFromFile(Root, &menu, Background, AnimationDir);
+    Menu_ReadFromFile(
+        Root,
+        &menu,
+        Background,
+        AnimationDir
+    );
 
-    if (menu.Count == 0) {
+    //Print(L"Timeout = %u\n", menu.TimeoutSec);
+    //Print(L"Entries = %u\n", menu.Count);
+
+    /* إذا لم توجد مداخل، نضيف مدخل افتراضي */
+    if (menu.Count == 0)
+    {
         CHAR16 defaultPath[256];
-        ArabicPath(defaultPath, 256, "\\EFI\\ArabOS\\النواة.ن");
-        Menu_AddEntry(&menu, (const CHAR8 *)"بدء ArabOS", defaultPath, NULL);
+
+
+
+        Menu_AddEntry(
+            &menu,
+            (const CHAR8 *)"بدء ArabOS",
+            defaultPath,
+            NULL
+        );
     }
 
-    /* ========================================================= */
-    /* تحميل صور القائمة (مرة واحدة فقط)                         */
-    /* ========================================================= */
+    /* تحميل صور القائمة */
     Menu_LoadImages(
         Root,
         &menu,
@@ -64,34 +83,21 @@ EFI_STATUS efi_main(
         menu.TitleBarPath,
         menu.SelectedPath,
         menu.ArrowPath,
-        menu.ProgressPath);
-    
-    Menu_LoadButtonImages(Root, &menu);
-    Menu_LoadScreenBackground(Root, &menu, Background);
+        menu.ProgressPath
+    );
 
-    /* ========================================================= */
-    /* تشغيل أنيميشن التمهيد (مرة واحدة)                         */
-    /* ========================================================= */
-    PlayLogoAnimation(Root, AnimationDir, LOGO_FRAME_COUNT, LOGO_FRAME_DELAY, gop);
-    clear_screen(gop);
+    Menu_LoadButtonImages(
+        Root,
+        &menu
+    );
 
-    /* ========================================================= */
-    /* الحلقة الرئيسية                                           */
-    /* ========================================================= */
-    while (TRUE)
-{
-    /* عرض القائمة */
-    UINT32 choice =
-        Menu_Run(
-            &menu,
-            gop,
-            SystemTable
-        );
+    Menu_LoadScreenBackground(
+        Root,
+        &menu,
+        Background
+    );
 
-    if (choice >= menu.Count)
-        continue;
-
-    /* عرض أنيميشن التحميل */
+    /* شعار التمهيد الأول */
     PlayLogoAnimation(
         Root,
         AnimationDir,
@@ -102,63 +108,70 @@ EFI_STATUS efi_main(
 
     clear_screen(gop);
 
-    /*
-     * عرض المسار المختار
-     */
-
-    Print(L"\n");
-    Print(L"[BOOT] Loading kernel:\n");
-    Print(L"%s\n",
-          menu.Entries[choice].Path);
-    Print(L"\n");
-
-    /*
-     * تحميل النواة فقط
-     */
-
-    CHAR16 KernelPath[] =
-    L"\\EFI\\ArabOS\\النواة.ن";
-
-    Status =
-        kernel_load(
+    /* تجاوز القائمة إذا كانت المهلة = 0 */
+    if (menu.TimeoutSec == 0 && menu.Count > 0)
+    {
+        return kernel_load(
+            ImageHandle,
             Root,
-            KernelPath
-    );
+            menu.Entries[0].Path
+        );
+    }
 
-    /*
-     * إذا رجعت النواة فهناك خطأ
-     */
+    while (TRUE)
+    {
+        UINT32 choice =
+            Menu_Run(
+                &menu,
+                gop,
+                SystemTable
+            );
 
-    clear_screen(gop);
+        if (choice >= menu.Count)
+            continue;
 
-    Print(L"\n\n");
-    Print(L"========================================\n");
-    Print(L"Kernel returned or failed\n");
-    Print(L"Status = %r\n", Status);
-    Print(L"========================================\n");
-    Print(L"\n");
-    Print(L"Press any key...\n");
+        /* شعار التحميل قبل تشغيل الهدف */
+        PlayLogoAnimation(
+            Root,
+            AnimationDir,
+            LOGO_FRAME_COUNT,
+            LOGO_FRAME_DELAY,
+            gop
+        );
 
-    EFI_INPUT_KEY key;
+        clear_screen(gop);
 
-    uefi_call_wrapper(
-        SystemTable->ConIn->Reset,
-        2,
-        SystemTable->ConIn,
-        FALSE
-    );
+        /* تحميل النواة المختارة من القائمة */
+        Status = kernel_load(
+            ImageHandle,
+            Root,
+            menu.Entries[choice].Path
+        );
 
-    while (
-        EFI_ERROR(
-            uefi_call_wrapper(
-                SystemTable->ConIn->ReadKeyStroke,
-                2,
-                SystemTable->ConIn,
-                &key
+        clear_screen(gop);
+
+        EFI_INPUT_KEY key;
+
+        uefi_call_wrapper(
+            SystemTable->ConIn->Reset,
+            2,
+            SystemTable->ConIn,
+            FALSE
+        );
+
+        while (
+            EFI_ERROR(
+                uefi_call_wrapper(
+                    SystemTable->ConIn->ReadKeyStroke,
+                    2,
+                    SystemTable->ConIn,
+                    &key
+                )
             )
-        )
-    );
+        );
 
-    clear_screen(gop);
-}
+        clear_screen(gop);
+    }
+
+    return EFI_SUCCESS;
 }
