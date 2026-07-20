@@ -22,13 +22,14 @@ UINT8 *load_png_frame(
     UINT32 *outW,
     UINT32 *outH);
 
-/* BitReader structure for DEFLATE decompression */
+/* BitReader structure for DEFLATE decompression
+ * (نافذة بتات مجمّعة UINT32 بدل قراءة بت واحد كل مرة - أسرع بكثير) */
 typedef struct {
     const UINT8 *src;
     UINTN        srcLen;
     UINTN        srcPos;
-    UINT32       bits;
-    UINT32       bitCount;
+    UINT32       window;     /* البتات المجمّعة (LSB = أول بت غير مستهلك) */
+    UINT32       windowBits; /* عدد البتات الصالحة داخل window */
 } BitReader;
 
 #endif /* IMAGE_MANAGER_H */

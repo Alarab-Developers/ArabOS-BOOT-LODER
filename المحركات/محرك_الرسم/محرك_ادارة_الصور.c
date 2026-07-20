@@ -5,46 +5,66 @@
 ───────────────────────────────────────────── */
 static void br_init(BitReader *b, const UINT8 *src, UINTN len)
 {
-    b->src      = src;
-    b->srcLen   = len;
-    b->srcPos   = 0;
-    b->bits     = 0;
-    b->bitCount = 0;
+    b->src        = src;
+    b->srcLen     = len;
+    b->srcPos     = 0;
+    b->window     = 0;
+    b->windowBits = 0;
 }
 
-static UINT32 br_bit(BitReader *b)
+/* عبّئ النافذة حتى تحوي "need" بت على الأقل (need <= 16 دائماً هنا) */
+static inline void br_fill(BitReader *b, UINT32 need)
 {
-    if (b->bitCount == 0) {
-        if (b->srcPos < b->srcLen)
-            b->bits = b->src[b->srcPos++];
-        else
-            b->bits = 0;
-        b->bitCount = 8;
+    while (b->windowBits < need) {
+        UINT32 byte = (b->srcPos < b->srcLen) ? b->src[b->srcPos++] : 0;
+        b->window |= (byte << b->windowBits);
+        b->windowBits += 8;
     }
-    UINT32 v = b->bits & 1;
-    b->bits >>= 1;
-    b->bitCount--;
+}
+
+/* اقرأ "n" بت دفعة واحدة بدون حلقة على مستوى البت (استبدال الأصل) */
+static inline UINT32 br_bits(BitReader *b, UINT32 n)
+{
+    if (n == 0) return 0;
+    br_fill(b, n);
+    UINT32 v = b->window & ((1u << n) - 1);
+    b->window     >>= n;
+    b->windowBits  -= n;
     return v;
 }
 
-static UINT32 br_bits(BitReader *b, UINT32 n)
+static inline UINT32 br_bit(BitReader *b)
 {
-    UINT32 v = 0;
-    for (UINT32 i = 0; i < n; i++)
-        v |= br_bit(b) << i;
-    return v;
+    return br_bits(b, 1);
+}
+
+/* انظر إلى "n" بت القادمة بدون استهلاكها (تُستخدم في فك هافمان السريع) */
+static inline UINT32 br_peek(BitReader *b, UINT32 n)
+{
+    br_fill(b, n);
+    return b->window & ((1u << n) - 1);
+}
+
+/* استهلك "n" بت بعد أن تكون قد قُرئت مسبقاً عبر br_peek */
+static inline void br_drop(BitReader *b, UINT32 n)
+{
+    b->window     >>= n;
+    b->windowBits  -= n;
 }
 
 static void br_align(BitReader *b)
 {
-    b->bits     = 0;
-    b->bitCount = 0;
+    UINT32 drop = b->windowBits & 7; /* تجاهل البتات المتبقية حتى حد البايت */
+    b->window     >>= drop;
+    b->windowBits  -= drop;
 }
 
 static UINT16 br_u16le(BitReader *b)
 {
-    UINT8 lo = (b->srcPos < b->srcLen) ? b->src[b->srcPos++] : 0;
-    UINT8 hi = (b->srcPos < b->srcLen) ? b->src[b->srcPos++] : 0;
+    /* بعد br_align تكون النافذة محاذاة على حدود بايت؛
+       اسحب بايتين إما من النافذة المتبقية أو مباشرة من المصدر */
+    UINT8 lo = (UINT8)br_bits(b, 8);
+    UINT8 hi = (UINT8)br_bits(b, 8);
     return (UINT16)(lo | ((UINT16)hi << 8));
 }
 
@@ -84,20 +104,30 @@ static BOOLEAN huff_build(Huffman *h, const UINT8 *lengths, INT32 n)
     return TRUE;
 }
 
-static INT32 huff_decode(BitReader *b, const Huffman *h)
+static inline INT32 huff_decode(BitReader *b, const Huffman *h)
 {
-    INT32  code = 0;
+    /* اجلب كل البتات التي قد يحتاجها هذا الجدول دفعة واحدة (نظرة واحدة فقط)
+       بدلاً من نداء دالة منفصل لكل بت - هذا هو أكبر مصدر للبطء سابقاً */
+    UINT32 window   = br_peek(b, (UINT32)h->maxBit);
+    UINT32 consumed = 0;
+
+    INT32  code  = 0;
     INT32  first = 0;
     INT32  index = 0;
 
     for (INT32 len = 1; len <= h->maxBit; len++) {
-        code  = (code << 1) | (INT32)br_bit(b);
+        UINT32 bit = (window >> consumed) & 1u;
+        consumed++;
+        code  = (code << 1) | (INT32)bit;
         INT32 count = (INT32)h->counts[len];
-        if (code - count < first)
+        if (code - count < first) {
+            br_drop(b, consumed);
             return (INT32)h->symbols[index + (code - first)];
+        }
         index += count;
         first  = (first + count) << 1;
     }
+    br_drop(b, consumed); /* لم يُوجد رمز صالح: استهلك ما قُرئ لتجنّب حلقة لا نهائية */
     return -1; /* error */
 }
 
@@ -138,8 +168,20 @@ static BOOLEAN ob_copy(OutBuf *o, UINT32 dist, UINT32 len)
 {
     if (dist > o->pos) return FALSE;
     if (o->pos + len > o->cap) return FALSE;
-    for (UINT32 i = 0; i < len; i++)
-        o->buf[o->pos + i] = o->buf[o->pos - dist + i];
+
+    UINT8       *dst = o->buf + o->pos;
+    const UINT8 *src = dst - dist;
+
+    if (dist >= len) {
+        /* المسافة أكبر من (أو تساوي) الطول: لا تداخل، يمكن نسخ الذاكرة دفعة
+           واحدة (أسرع بكثير من حلقة بايت-بايت) */
+        CopyMem(dst, src, len);
+    } else {
+        /* تداخل حقيقي (نمط تكراري RLE مثل تعبئة لون واحد) - يجب أن يبقى
+           النسخ بايت بايت لأن كل بايت يعتمد على ما كُتب للتو */
+        for (UINT32 i = 0; i < len; i++)
+            dst[i] = src[i];
+    }
     o->pos += len;
     return TRUE;
 }
@@ -161,8 +203,11 @@ static BOOLEAN inflate_stream(OutBuf *o, const UINT8 *src, UINTN srcLen)
             UINT16 nlen = br_u16le(&br);
             (void)nlen;
             for (UINT16 i = 0; i < len; i++) {
-                if (br.srcPos >= br.srcLen) return FALSE;
-                if (!ob_put(o, br.src[br.srcPos++])) return FALSE;
+                /* يجب القراءة عبر قارئ البتات (وليس مباشرة من src[srcPos])
+                   لأن النافذة قد تحتوي بايتات مقروءة مسبقاً من الملف لم
+                   تُستهلك بعد */
+                if (br.srcPos >= br.srcLen && br.windowBits == 0) return FALSE;
+                if (!ob_put(o, (UINT8)br_bits(&br, 8))) return FALSE;
             }
         } else if (btype == 1 || btype == 2) {
             Huffman litH, distH;

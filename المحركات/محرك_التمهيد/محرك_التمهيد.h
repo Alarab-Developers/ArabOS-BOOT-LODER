@@ -11,8 +11,8 @@
    ───────────────────────────────────────────── */
 
 /* إعدادات الأنيميشن */
-#define ANIMATION_LOOP_COUNT 3      /* عدد مرات التكرار */
-#define ANIMATION_QUICK_MODE 0      /* إيقاف الوضع السريع */
+#define ANIMATION_LOOP_COUNT 1      /* عدد مرات التكرار */
+#define ANIMATION_QUICK_MODE 0      /* تشغيل الوضع السريع */
 
 /* Public Functions */
 EFI_STATUS PlayLogoAnimation(

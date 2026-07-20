@@ -111,10 +111,10 @@ typedef struct {
 } __attribute__((packed)) BMP_INFO_HEADER;
 
 /* ثوابت أنيميشن الشعار */
-#define LOGO_FRAME_COUNT   35        /* عدد الصور */
+#define LOGO_FRAME_COUNT   100       /* عدد الصور */
 #define LOGO_FRAME_W       250       /* عرض كل صورة بالبكسل */
-#define LOGO_FRAME_H       250       /* ارتفاع كل صورة بالبكسل */
-#define LOGO_FRAME_DELAY   40000     /* تأخير بين الإطارات بالميكروثانية (≈25fps) */
+#define LOGO_FRAME_H       300       /* ارتفاع كل صورة بالبكسل */
+#define LOGO_FRAME_DELAY   32000     /* تأخير بين الإطارات بالميكروثانية (≈60fps) */
 
 /*
  * الدقة المفضلة للشاشة

@@ -5,10 +5,10 @@
 /* ─────────────────────────────────────────────
    ثوابت الأداء
 ───────────────────────────────────────────── */
-#define ANIMATION_QUICK_MODE 0   /* إيقاف الوضع السريع */
+
 #define ANIMATION_MAX_FRAMES_SLOW 8
 #define ANIMATION_MAX_FRAMES_FAST 15
-#define ANIMATION_LOOP_COUNT 3    /* عدد مرات تكرار الأنيميشن */
+#define ANIMATION_LOOP_COUNT 1    /* عدد مرات تكرار الأنيميشن */
 
 /* ─────────────────────────────────────────────
    render_frame_fast - رسم سريع
@@ -146,8 +146,8 @@ EFI_STATUS PlayLogoAnimation(
         return EFI_INVALID_PARAMETER;
 
     UINT32 actualFrameCount = FrameCount;
-    if (actualFrameCount > 30)
-        actualFrameCount = 30;
+    if (actualFrameCount > 100) //عدد الفريمات في حد 100 صورة وهذا هو العدد المناسب لأقلاع سريع وطبيعي
+        actualFrameCount = 100;
 
     typedef struct {
         UINT8  *rgba;
@@ -248,7 +248,7 @@ EFI_STATUS PlayLogoAnimation(
 
         if (loop < (ANIMATION_LOOP_COUNT - 1))
         {
-            stall_us(50000);
+            stall_us(30000);
         }
     }
 
