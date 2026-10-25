@@ -612,11 +612,11 @@ EFI_STATUS DrawPNG(
         return EFI_LOAD_ERROR;
     }
 
-    UINTN ScreenWidth  = gop->Mode->Info->HorizontalResolution;
-    UINTN ScreenHeight = gop->Mode->Info->VerticalResolution;
+   // UINTN ScreenWidth  = gop->Mode->Info->HorizontalResolution;
+    //UINTN ScreenHeight = gop->Mode->Info->VerticalResolution;
 
-    Print(L"Screen=%dx%d Image=%dx%d\n",
-          ScreenWidth, ScreenHeight, imgW, imgH);
+    //Print(L"Screen=%dx%d Image=%dx%d\n",
+      //    ScreenWidth, ScreenHeight, imgW, imgH);
 
     /* امسح الشاشة بالأسود أولاً (نحتاج clear_screen من محرك_التمهيد) */
     /* clear_screen(gop);  - ستُستدعى من الخارج إذا لزم */

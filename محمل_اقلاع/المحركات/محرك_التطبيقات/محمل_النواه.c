@@ -3,6 +3,42 @@
 #include "محرك_الذاكرة/محرك_الذاكرة.h"
 
 
+/*
+ * compute_total_ram
+ * -----------------
+ * تمر على خريطة الذاكرة القادمة من UEFI GetMemoryMap وتحسب أعلى
+ * عنوان فيزيائي ضمن المناطق القابلة للاستخدام، بدل الاعتماد على
+ * قيمة ثابتة (64MB) داخل النواة.
+ */
+static uint64_t compute_total_ram(EFI_MEMORY_DESCRIPTOR *map, UINTN mapSize, UINTN descSize)
+{
+    uint64_t max_addr = 0;
+    UINT8 *p = (UINT8 *)map;
+    UINTN count = mapSize / descSize;
+
+    for (UINTN i = 0; i < count; i++) {
+        EFI_MEMORY_DESCRIPTOR *d = (EFI_MEMORY_DESCRIPTOR *)(p + i * descSize);
+
+        switch (d->Type) {
+            case EfiConventionalMemory:
+            case EfiBootServicesCode:
+            case EfiBootServicesData:
+            case EfiLoaderCode:
+            case EfiLoaderData:
+            case EfiACPIReclaimMemory: {
+                uint64_t end = d->PhysicalStart + d->NumberOfPages * EFI_PAGE_SIZE;
+                if (end > max_addr)
+                    max_addr = end;
+                break;
+            }
+            default:
+                break;
+        }
+    }
+
+    return max_addr;
+}
+
 EFI_STATUS kernel_load(
     EFI_HANDLE      ImageHandle,
     EFI_FILE_HANDLE Root,
@@ -11,11 +47,6 @@ EFI_STATUS kernel_load(
 {
     EFI_STATUS Status;
     EFI_FILE_HANDLE File;
-
-    //Print(L"\n=============================\n");
-    //Print(L"[LOADER] kernel_load()\n");
-    //Print(L"[LOADER] Path: %s\n", Path);
-    //Print(L"=============================\n");
 
     /* ─────────────────────────
        1. فتح الملف
@@ -26,10 +57,8 @@ EFI_STATUS kernel_load(
         EFI_FILE_MODE_READ, 0);
 
     if (EFI_ERROR(Status)) {
-        //Print(L"[ERROR] Open failed: %r\n", Status);
         return Status;
     }
-    //Print(L"[LOADER] File opened OK\n");
 
     /* ─────────────────────────
        2. قراءة الترويسة
@@ -41,16 +70,9 @@ EFI_STATUS kernel_load(
         File->Read, 3, File, &size, &hdr);
 
     if (EFI_ERROR(Status)) {
-        //Print(L"[ERROR] Header read: %r\n", Status);
         uefi_call_wrapper(File->Close, 1, File);
         return Status;
     }
-
-    //Print(L"[LOADER] Format     : %a\n",   hdr.format);
-    //Print(L"[LOADER] EntryOff   : 0x%lx\n", hdr.entry_point);
-    //Print(L"[LOADER] ImageSize  : %lu\n",   hdr.image_size);
-
-    //Print(L"[DBG] A - before format check\n");
 
     /* ─────────────────────────
        3. التحقق
@@ -67,64 +89,36 @@ EFI_STATUS kernel_load(
     }
 
     if (!format_ok) {
-        //Print(L"[ERROR] Bad format\n");
         uefi_call_wrapper(File->Close, 1, File);
         return EFI_LOAD_ERROR;
     }
-
-    //Print(L"[DBG] B - after format check\n");
 
     if (hdr.image_size == 0 || hdr.image_size > 64*1024*1024) {
-        //Print(L"[ERROR] Bad image size\n");
         uefi_call_wrapper(File->Close, 1, File);
         return EFI_LOAD_ERROR;
     }
-
-    //Print(L"[DBG] C - after size check\n");
 
     /* ─────────────────────────
        4. حجز الذاكرة على 0x100000 بالضبط
-       (النواة مُجمَّعة على هذا العنوان — لا يجوز تغييره)
     ───────────────────────── */
     UINTN pages = EFI_SIZE_TO_PAGES(hdr.image_size);
 
-    //Print(L"[DBG] pages=%lu\n", pages);
-
     EFI_PHYSICAL_ADDRESS addr = KERNEL_LOAD_ADDRESS;
-
-    //Print(L"[DBG] Before AllocatePages @ 0x%lx\n", addr);
 
     Status = uefi_call_wrapper(
         BS->AllocatePages, 4,
-        AllocateAddress,      /* ثابت على العنوان المطلوب */
+        AllocateAddress,
         EfiLoaderData,
         pages,
         &addr);
 
-    //Print(L"[DBG] After AllocatePages: %r\n", Status);
-
     if (EFI_ERROR(Status)) {
-        //Print(L"[ERROR] AllocatePages @ 0x%lx failed: %r\n",
-         //     KERNEL_LOAD_ADDRESS, Status);
         uefi_call_wrapper(File->Close, 1, File);
         return Status;
     }
 
-    //Print(L"[LOADER] Allocated @ 0x%lx\n", addr);
-
     /* ─────────────────────────
-       4.5 تصفير الذاكرة المحجوزة  ← الإصلاح
-       ─────────────────────────
-       AllocatePages في UEFI لا يضمن أبداً أن المحتوى يكون أصفار
-       (المواصفة تقول إن المحتوى "undefined"). على QEMU/OVMF غالباً
-       بترجع صفحات صفرية بالصدفة، لكن على الهاردوير الحقيقي بتكون
-       فيها بواقي بيانات حقيقية من الفيرموير.
-
-       أي متغير .bss في الكيرنل (مؤشرات، بيتماب، جداول عمليات...)
-       بيعتمد على إنه يبدأ صفر تلقائياً. من غير التصفير ده، هيبدأ
-       بقيمة عشوائية → أول استخدام له هيكتب على عنوان عشوائي تماماً
-       → Page Fault بعنوان CR2 غريب (زي اللي ظهر في شاشة الخطأ:
-       0xFFFFFFFC8968F558) بس على الهاردوير الحقيقي فقط.
+       4.5 تصفير الذاكرة المحجوزة
     ───────────────────────── */
     SetMem((void *)addr, pages * EFI_PAGE_SIZE, 0);
 
@@ -137,12 +131,10 @@ EFI_STATUS kernel_load(
         File->Read, 3, File, &size, (void *)addr);
 
     if (EFI_ERROR(Status)) {
-        //Print(L"[ERROR] Read kernel: %r\n", Status);
         uefi_call_wrapper(File->Close, 1, File);
         return Status;
     }
 
-    //Print(L"[LOADER] Loaded %lu bytes\n", size);
     uefi_call_wrapper(File->Close, 1, File);
 
     /* ─────────────────────────
@@ -150,8 +142,6 @@ EFI_STATUS kernel_load(
     ───────────────────────── */
     kernel_entry_t entry =
         (kernel_entry_t)(addr + hdr.entry_point);
-
-    //Print(L"[LOADER] Entry @ 0x%lx\n", (UINT64)entry);
 
     /* ─────────────────────────
        7. GOP
@@ -164,7 +154,6 @@ EFI_STATUS kernel_load(
         &GopGuid, NULL, (void **)&gop);
 
     if (EFI_ERROR(Status)) {
-        //Print(L"[ERROR] GOP: %r\n", Status);
         return Status;
     }
 
@@ -181,47 +170,23 @@ EFI_STATUS kernel_load(
 
     if (EFI_ERROR(Status))
         return Status;
-/*
-    for (;;)
-    {
-        __asm__ __volatile__("hlt"); // هذه الحلقة هي لايقاف المحمل من تحميل النواة (للأختبار والتحقق من صحة المحمل وللاختبار فقط)
-    }
-*/
-    //Print(L"[LOADER] FB=0x%lx %ux%u pitch=%u\n",
-        //  (UINT64)boot.FrameBuffer,
-         // boot.Width, boot.Height,
-        //  boot.PixelsPerScanLine);
-
-    //Print(L"\n[LOADER] press any key to continue...\n");
-
-    //EFI_INPUT_KEY Key;
-    //uefi_call_wrapper(ST->ConIn->Reset, 2, ST->ConIn, FALSE);
-    //while (EFI_ERROR(
-    //    uefi_call_wrapper(ST->ConIn->ReadKeyStroke, 2, ST->ConIn, &Key)))
-    //{
-    //}
 
     /* ─────────────────────────
        إنشاء جداول الصفحات
-       (next_page يبدأ من 0x200000 — بعد النواة)
+       ⬇⬇⬇ التعديل هنا ⬇⬇⬇
+       نمرّر نهاية الصورة الفعلية للنواة إلى memory_init
+       حتى تبدأ جداول الصفحات بعدها، لا عند 0x200000 الثابت.
     ───────────────────────── */
-    EFI_STATUS mst = memory_init(BS);
+    uint64_t kernel_image_end =
+        KERNEL_LOAD_ADDRESS + (uint64_t)hdr.image_size;
+
+    EFI_STATUS mst = memory_init(BS, kernel_image_end);
 
     if (EFI_ERROR(mst)) {
-        //Print(L"[ERROR] memory_init: %r\n", mst);
         for (;;);
     }
 
     paging_build_identity();
-
-    //Print(L"[MM] PML4     = %lx\n", (UINT64)g_memory.pml4);
-    //Print(L"[MM] PDPT_LOW = %lx\n", (UINT64)g_memory.pdpt_low);
-
-    //for (int i = 0; i < 4; i++)
-        //Print(L"[MM] PD[%d]   = %lx\n", i, (UINT64)g_memory.pd_low[i]);
-
-    //Print(L"[MM] PML4[0]  = %lx\n", g_memory.pml4[0]);
-    //Print(L"[LOADER] EntryOff = 0x%lx\n", hdr.entry_point);
 
     /* ─────────────────────────
        8. Memory Map + ExitBootServices
@@ -249,6 +214,8 @@ EFI_STATUS kernel_load(
         &MapSize, MemMap, &MapKey, &DescSize, &DescVer);
 
     if (EFI_ERROR(Status)) return Status;
+
+    boot.total_ram_bytes = compute_total_ram(MemMap, MapSize, DescSize);
 
     Status = uefi_call_wrapper(
         BS->ExitBootServices, 2,

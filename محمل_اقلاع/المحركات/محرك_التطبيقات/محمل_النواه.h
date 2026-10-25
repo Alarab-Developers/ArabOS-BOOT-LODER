@@ -28,6 +28,7 @@ typedef struct
     UINT32  PixelsPerScanLine;
     void    *system_archive;
     uint64_t system_archive_size;
+    uint64_t total_ram_bytes;
 
 } boot_info_t;
 

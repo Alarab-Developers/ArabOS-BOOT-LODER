@@ -5,17 +5,11 @@ memory_context_t g_memory;
 
 static EFI_BOOT_SERVICES* g_bs = NULL;
 
-/*
- * next_page يبدأ من 0x200000 (بعد النواة بأمان).
- * النواة محمَّلة على 0x100000 وقد تمتد حتى ~0x200000.
- * جداول الصفحات لا تتجاوز 6 صفحات = 24KB.
- */
-static EFI_PHYSICAL_ADDRESS next_page = 0x200000;
+static EFI_PHYSICAL_ADDRESS next_page = 0;
 
 static void* alloc_page(void)
 {
     EFI_PHYSICAL_ADDRESS addr = next_page;
-    next_page += 0x1000;
 
     EFI_STATUS st =
         uefi_call_wrapper(
@@ -27,24 +21,33 @@ static void* alloc_page(void)
             &addr);
 
     if (EFI_ERROR(st))
+    {
+        //Print(L"[MM] AllocatePages @ 0x%lx failed: %r\n", addr, st);
         return NULL;
+    }
+
+    next_page += 0x1000;
 
     SetMem((void*)addr, 4096, 0);
 
-    Print(L"page=%lx\n", addr);
+    //Print(L"[MM] page @ %lx\n", addr);
 
     return (void*)addr;
 }
 
-EFI_STATUS memory_init(EFI_BOOT_SERVICES* bs)
+EFI_STATUS memory_init(EFI_BOOT_SERVICES* bs, uint64_t kernel_end)
 {
     g_bs = bs;
+
+    next_page = (kernel_end + 0xFFFULL) & ~0xFFFULL;
+
+    //Print(L"[MM] tables base = 0x%lx (kernel_end=0x%lx)\n",
+      //    next_page, kernel_end);
 
     g_memory.pml4      = alloc_page();
     g_memory.pdpt_low  = alloc_page();
 
-    if (!g_memory.pml4 ||
-        !g_memory.pdpt_low)
+    if (!g_memory.pml4 || !g_memory.pdpt_low)
     {
         return EFI_OUT_OF_RESOURCES;
     }
@@ -52,7 +55,6 @@ EFI_STATUS memory_init(EFI_BOOT_SERVICES* bs)
     for (int i = 0; i < 4; i++)
     {
         g_memory.pd_low[i] = alloc_page();
-
         if (!g_memory.pd_low[i])
             return EFI_OUT_OF_RESOURCES;
     }
@@ -97,4 +99,13 @@ static inline void load_cr3(uint64_t value)
 void paging_enable_kernel_tables(void)
 {
     load_cr3((uint64_t)g_memory.pml4);
+}
+
+/* ═══════════════════════════════════════════════════════════════
+ * جديد: يُرجع أول عنوان فيزيائي حرّ فعلي (بعد كل جداول الصفحات).
+ * يُستدعى بعد memory_init ليمرَّر إلى النواة عبر boot.kernel_end_phys.
+ * ═══════════════════════════════════════════════════════════════ */
+EFI_PHYSICAL_ADDRESS bootloader_get_next_free_page(void)
+{
+    return next_page;
 }

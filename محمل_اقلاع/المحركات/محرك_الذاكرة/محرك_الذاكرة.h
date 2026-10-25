@@ -4,7 +4,6 @@
 #include <stdint.h>
 
 
-
 typedef struct
 {
     uint64_t* pml4;
@@ -14,7 +13,9 @@ typedef struct
 
 extern memory_context_t g_memory;
 
-EFI_STATUS memory_init(EFI_BOOT_SERVICES* bs);
+/* جديد: نمرّر عنوان نهاية النواة الفعلي حتى تبدأ جداول الصفحات بعده،
+   بدلًا من عنوان ثابت 0x200000 قد يتداخل مع .bss النواة. */
+EFI_STATUS memory_init(EFI_BOOT_SERVICES* bs, uint64_t kernel_end);
 
 void paging_build_identity(void);
 

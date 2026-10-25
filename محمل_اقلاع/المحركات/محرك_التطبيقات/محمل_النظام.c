@@ -80,7 +80,7 @@ EFI_STATUS load_system_archive(
 
     UINTN read_size = archive_size;
 
-    Print(L"[SYS] Opening %s...\n", archivePath);
+    //Print(L"[SYS] Opening %s...\n", archivePath);
 
     Status = uefi_call_wrapper(
         File->Read,
@@ -98,15 +98,15 @@ EFI_STATUS load_system_archive(
     
         return Status;
     }
-    Print(L"[SYS] File opened successfully\n");
+    //Print(L"[SYS] File opened successfully\n");
 
     boot->system_archive =
         (void *)address;
-    Print(L"[SYS] File size = %lu bytes\n", archive_size);
+    //Print(L"[SYS] File size = %lu bytes\n", archive_size);
 
     boot->system_archive_size =
         archive_size;
-    Print(L"[SYS] File size = %lu bytes\n", archive_size);
+    //Print(L"[SYS] File size = %lu bytes\n", archive_size);
 
     return EFI_SUCCESS;
 }
